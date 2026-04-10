@@ -1,15 +1,11 @@
-from flask import Flask, request, abort
+from flask import Flask, request
 import os
 import json
-import hmac
-import hashlib
-import base64
 import requests as req
 
 app = Flask(__name__)
 
 CHANNEL_ACCESS_TOKEN = os.environ["CHANNEL_ACCESS_TOKEN"]
-CHANNEL_SECRET = os.environ["CHANNEL_SECRET"]
 
 REPLIES = {
     "診療科一覧": "【診療科一覧】\n総合診療科／消化器内科・内視鏡内科／循環器内科／透析内科／漢方内科／緩和ケア内科／外科・消化器外科／乳腺外科／肛門外科／脳神経外科／整形外科／リハビリテーション科／麻酔科（完全予約制）／歯科・歯科口腔外科（完全予約制）",
@@ -30,14 +26,6 @@ KEYWORDS = {
     "電話": "お問い合わせ", "問い合わせ": "お問い合わせ",
 }
 
-def verify_signature(body, signature):
-    hash = hmac.new(
-        CHANNEL_SECRET.encode("utf-8"),
-        body.encode("utf-8"),
-        hashlib.sha256
-    ).digest()
-    return base64.b64encode(hash).decode("utf-8") == signature
-
 def reply_message(reply_token, text):
     req.post(
         "https://api.line.me/v2/bot/message/reply",
@@ -53,38 +41,38 @@ def reply_message(reply_token, text):
 
 @app.route("/callback", methods=["POST"])
 def callback():
-    signature = request.headers.get("X-Line-Signature", "")
-    body = request.get_data(as_text=True)
+    try:
+        body = request.get_data(as_text=True)
+        events = json.loads(body).get("events", [])
 
-    if not verify_signature(body, signature):
-        abort(400)
+        for event in events:
+            if event.get("type") != "message":
+                continue
+            if event.get("message", {}).get("type") != "text":
+                continue
 
-    events = json.loads(body).get("events", [])
-    for event in events:
-        if event.get("type") != "message":
-            continue
-        if event.get("message", {}).get("type") != "text":
-            continue
+            text = event["message"]["text"].strip()
+            reply_token = event["replyToken"]
 
-        text = event["message"]["text"].strip()
-        reply_token = event["replyToken"]
+            matched = None
+            for kw, key in KEYWORDS.items():
+                if kw in text:
+                    matched = key
+                    break
 
-        matched = None
-        for kw, key in KEYWORDS.items():
-            if kw in text:
-                matched = key
-                break
+            if matched:
+                reply_message(reply_token, REPLIES[matched])
+            else:
+                reply_message(
+                    reply_token,
+                    "ご連絡ありがとうございます。\n下のメニューからお選びいただくか、お電話にてお問い合わせください。\n📞 0155-25-3121"
+                )
 
-        if matched:
-            reply_message(reply_token, REPLIES[matched])
-        else:
-            reply_message(
-                reply_token,
-                "ご連絡ありがとうございます。\n下のメニューからお選びいただくか、お電話にてお問い合わせください。\n📞 0155-25-3121"
-            )
+    except Exception as e:
+        print(f"Error: {e}")
 
     return "OK", 200
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port)app.run(host="0.0.0.0", port=port)
+    app.run(host="0.0.0.0", port=port)
